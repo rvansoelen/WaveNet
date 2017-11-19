@@ -17,9 +17,45 @@ class WaveNet:
     '''
 
 	#initialize class
-	def __init__(self):
-		#TODO: Fill these variables
-		self.dilations = None
+	def __init__(self, audio_files, layer_dialation_factors, filter_width, residual_filters, dialation_filters, skip_filters):
+		self.audio_files = audio_files
+		self.layer_dialation_factors = layer_dialation_factors
+		self.filter_width = filter_width
+		self.residual_filters = residual_filters
+		self.dialation_filters = dialation_filters
+		self.skip_filters = skip_filters
+		self.amplitude_vals = 256 #8bit
+		self.field = (filter_width - 1) * sum(layer_dialation_factors) + filter_width
+		# convolution filter variable initializer
+		self.conv_init = tf.contrib.layers.xavier_initializer_conv2d()
+
+		layer_dictionary = dict()
+		with tf.variable_scope('Wavenet'):
+			# setup causal layer variables
+			with tf.variable_scope('Causal Layer'):
+				init_filters = self.amplitude_vals
+				init_filter_width = self.filter_width
+				layer_dictionary['Causal Layer']['Filter'] = tf.Variable(self.conv_init(init_filter_width,init_filters,self.residual_filters), 'filter')
+
+			# setup dilated convolutional stack  variables
+			layer_dictionary['Dialated Stack'] = list()
+			with tf.variable_scope('Dialated Stack'):
+				for layerNumber, dilation in enumerate(self.layer_dialation_factors):
+					with tf.variable_scope('layer{}'.format(layerNumber)):
+						currentLayer = dict()
+						initializers = [self.filter_width, self.residual_filters, self.dialation_filters]
+						currentLayer['Filter'] = tf.Variable(self.conv_init(shape=initializers), name='Filter')
+						currentLayer['Gate'] = tf.Variable(self.conv_init(shape=initializers), name='Gate')
+						currentLayer['Dense'] = tf.Variable(self.conv_init(shape=initializers), name='Dense')
+						currentLayer['Skip'] = tf.Variable(self.conv_init(shape=initializers), name='Skip')
+						layer_dictionary['Dialated Stack'].append(currentLayer)
+
+			# setup post-procssing layer variables
+			with tf.variable_scope('Post-Processing'):
+				currentLayer = dict()
+				currentLayer['Post-Process1'] = tf.Variable(self.conv_init(shape=[1, self.skip_filters, self.skip_filters]), name='Post-Process1')
+				currentLayer['Post-Process2'] = tf.Variable(self.conv_init(shape=[1, self.skip_filters, self.amplitude_vals]), name='Post-Process2')
+				layer_dictionary['Post-Processing'] = currentLayer
 
 
 	def createCausalLayer(self):
@@ -49,7 +85,7 @@ class WaveNet:
 		#dilated convolutional stack 
 		outputs = []
 		with tf.variable_scope('Dilated Stack'):
-			for layerNumber, dilation in enumerate(self.dilations):
+			for layerNumber, dilation in enumerate(self.layer_dialation_factors):
 				with tf.named_scope('Dilated Layer '+str(layerNumber)):
 					#represents skip(direct connection to last layer) and residual(normal) connections
 					skipOutput, currentLayer = self.createDilatedLayer(currentLayer)
@@ -64,11 +100,12 @@ class WaveNet:
 
 			total = tf.nn.relu(sum(outputs))
 			conv1 = tf.nn.conv1d(transformed1, w1, stride=1, padding="SAME")
-     		conv1 = tf.nn.relu(tf.add(conv1, b1))
+			conv1 = tf.nn.relu(tf.add(conv1, b1))
 
      		conv2 = tf.nn.conv1d(transformed2, w2, stride=1, padding="SAME")
             conv2 = tf.add(conv2, b2)
         return conv2
+
 
     def wrapLossOptimizer(self, model):
 		with tf.named_scope('Loss'):
