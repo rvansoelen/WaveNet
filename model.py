@@ -1,5 +1,6 @@
 #This is where the wavenet model will be defined
 import tensorflow as tf
+import wavenet_config_constants
 
 class WaveNet:
 	'''Implements the WaveNet network for generative audio.
@@ -17,15 +18,15 @@ class WaveNet:
     '''
 
 	#initialize class
-	def __init__(self, audio_files, layer_dialation_factors, filter_width, residual_filters, dialation_filters, skip_filters):
-		self.audio_files = audio_files
-		self.layer_dialation_factors = layer_dialation_factors
-		self.filter_width = filter_width
-		self.residual_filters = residual_filters
-		self.dialation_filters = dialation_filters
-		self.skip_filters = skip_filters
-		self.amplitude_vals = 256 #8bit
-		self.field = (filter_width - 1) * sum(layer_dialation_factors) + filter_width
+	def __init__(self):
+		self.audio_files = wavenet_config_constants.BatchSize
+		self.layer_dialation_factors = wavenet_config_constants.LayerDialationFactors
+		self.filter_width = wavenet_config_constants.FilterWidth
+		self.residual_filters = wavenet_config_constants.ResidualFilters
+		self.dialation_filters = wavenet_config_constants.DialationFilters
+		self.skip_filters = wavenet_config_constants.SkipFilters
+		self.amplitude_filters = wavenet_config_constants.AmplitudeFilters
+		self.field = (self.filter_width - 1) * sum(self.layer_dialation_factors) + self.filter_width
 		# convolution filter variable initializer
 		self.conv_init = tf.contrib.layers.xavier_initializer_conv2d()
 		self.inputDType = tf.uint8
