@@ -28,6 +28,9 @@ class WaveNet:
 		self.field = (filter_width - 1) * sum(layer_dialation_factors) + filter_width
 		# convolution filter variable initializer
 		self.conv_init = tf.contrib.layers.xavier_initializer_conv2d()
+		self.inputDType = tf.uint8
+		self.oneHotDetpth = 256 #8bit
+		self.computationalDType = tf.float32
 
 		layer_dictionary = dict()
 		with tf.variable_scope('Wavenet'):
@@ -58,45 +61,57 @@ class WaveNet:
 				layer_dictionary['Post-Processing'] = currentLayer
 
 
-	def createCausalLayer(self):
-
-
-	def createDilatedLayer(self, input, name='Dilated Layer'):
+	def createCausalConv(self, input, dilation, name, numFilters=1):
 		with tf.variable_scope(name):
-			w = tf.createVariable('weights')
-			b = tf.createVariable('bias')
-			conv = tf.conv1d(input, w, stride=1, padding='SAME')
-			conv = tf.add(conv, b)
-			actv = tf.tanh(conv)*tf.sigmoid(conv)
+			numInChannels = tf.shape(input)[1]
+			w = tf.get_variable('weights', shape=(2, numInChannels, numFilters)) #shape: (filterWidth, numInputChannels, numOutputChannels)
+			downSample = input[:, :, ::dilation]
+			if tf.shape(downSample)[2]%2 != 0:
+				downSample = tf.pad(downSample, [[0, 0], [0, 0], [1, 0]])
+			conv = tf.conv1d(downSample, w, stride=1, data_format='NCHW')
+			conv = tf.transpose(conv, perm=[0, 2, 1]) #THIS MAY NOT BE NEEDED. NEED TO CHECK THIS
+			b = tf.get_variable('bias', shape=tf.shape(conv))
+			convWithBias = tf.add(conv, b)
+			return convWithBias
+
+	def createDilatedLayer(self, input, name):
+		with tf.variable_scope(name):
+			filterConv = self.createCausalConv(input, dilation, name='Filter Causal Convolution')
+			gateConv = self.createCausalConv(input, dilation, name='Gate Causal Convolution')
+			actv = tf.tanh(filterConv)*tf.sigmoid(gateConv)
 			skip = actv
 			residual = tf.add(actv, input)
 			return skip, residual
 
 	#create and return model
-	def createModel(self, input):
+	def getGenerativeModel(self):
 		#TODO: try not using currentLayer variable to make it more clear where each layer is defined
-		currentLayer = input
+		#input shape: (batchSize, , numChannels, receptiveField)
+		input = tf.placeholder(self.inputDType, shape=(-1, 1, self.receptiveField), name='Raw Input') 
 
-		#preprocessing layer
+		#preprocessing layer (one hot encoding)
+		oneHot = tf.one_hot(input, self.oneHotDepth, dtype=self.computationalDType, name='One Hot Encoding')
+		#oneHot has the shape (batchSize, 1, receptiveField, oneHotDepth)
 
-		#causal layer
-		currentLayer = self.createCausalLayer(currentLayer) #"causalLayer" named scope is defined here?
+		#causal layer (not sure if this is needed)
+		#currentLayer = self.createCausalConv(currentLayer) #"causalLayer" named scope is defined here?
 		
 		#dilated convolutional stack 
 		outputs = []
+		currentLayer = oneHot
 		with tf.variable_scope('Dilated Stack'):
 			for layerNumber, dilation in enumerate(self.layer_dialation_factors):
 				with tf.named_scope('Dilated Layer '+str(layerNumber)):
 					#represents skip(direct connection to last layer) and residual(normal) connections
-					skipOutput, currentLayer = self.createDilatedLayer(currentLayer)
+					skipOutput, currentLayer = self.createDilatedLayer(currentLayer, dilation, name='Dilated Layer '+str(layerNumber))
 					outputs.append(skipOutput)
 
 		#post processing layer
 		with tf.variable_scope('Post-Processing'):
-			w1 = createVariable('postWeights1', shapeW1)
-			b1 = createVariable('postBias1', shapeB1)
-			w2 = createVariable('postWeights1', shapeW2)
-			b2 = createVariable('postBias1', shapeB2)
+			w1 = tf.get_variable('postWeights1', shapeW1)
+			b1 = tf.get_variable('postBias1', shapeB1)
+			w2 = tf.get_variable('postWeights1', shapeW2)
+			b2 = tf.get_variable('postBias1', shapeB2)
 
 			total = tf.nn.relu(sum(outputs))
 			conv1 = tf.nn.conv1d(transformed1, w1, stride=1, padding="SAME")
@@ -106,11 +121,12 @@ class WaveNet:
             conv2 = tf.add(conv2, b2)
         return conv2
 
-
-    def wrapLossOptimizer(self, model):
+    def getTrainingModel(self, input):
+    	model = self.getGenerativeModel()
 		with tf.named_scope('Loss'):
 			#loss layer
 			target = tf.placeholder(tf.float)
 			loss = tf.softmax_cross_entropy_with_logits(logits=model, labels=target)
+
 		return loss
 
