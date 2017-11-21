@@ -1,16 +1,17 @@
 # Logging
-LogRoot = './log'
+LogRoot = 'log'
 
 
 # Audio inputs
-AudioDirectory = './data/wavenet_corpus'
-BatchSize = 2 # files to process at once (threading)
+AudioDirectory = 'data/wavenet_corpus'
+# BatchSize = 2 # files to process at once (threading)
 
 # Training
 CheckpointsToKeep = 5
-LogDir = 'Train'
+LogTrainDir = 'Train'
 TrainIterations =  1e5
 CheckpointFreq = 50
+LearningRate = 1e-3
 
 
 FilterWidth = 2
