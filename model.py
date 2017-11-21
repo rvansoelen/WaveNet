@@ -63,14 +63,13 @@ class WaveNet:
 
 
 	def createCausalConv(self, input, dilation, name, numFilters=1):
+		#the filter size is assumed to be 2
 		with tf.variable_scope(name):
 			numInChannels = tf.shape(input)[1]
 			w = tf.get_variable('weights', shape=(2, numInChannels, numFilters)) #shape: (filterWidth, numInputChannels, numOutputChannels)
 			downSample = input[:, :, ::dilation]
-			if tf.shape(downSample)[2]%2 != 0:
-				downSample = tf.pad(downSample, [[0, 0], [0, 0], [1, 0]])
-			conv = tf.conv1d(downSample, w, stride=1, data_format='NCHW')
-			conv = tf.transpose(conv, perm=[0, 2, 1]) #THIS MAY NOT BE NEEDED. NEED TO CHECK THIS
+			downSample = tf.pad(downSample, [[0, 0], [0, 0], [1, 0]])
+			conv = tf.conv1d(downSample, w, 'VALID', stride=1, data_format='NCHW')
 			b = tf.get_variable('bias', shape=tf.shape(conv))
 			convWithBias = tf.add(conv, b)
 			return convWithBias
@@ -80,18 +79,22 @@ class WaveNet:
 			filterConv = self.createCausalConv(input, dilation, name='Filter Causal Convolution')
 			gateConv = self.createCausalConv(input, dilation, name='Gate Causal Convolution')
 			actv = tf.tanh(filterConv)*tf.sigmoid(gateConv)
+			#TODO: Apply 1x1 convolution
 			skip = actv
 			residual = tf.add(actv, input)
+			#TODO: Make sure actv is clipped to be the right size so it can be added with residual
 			return skip, residual
 
 	#create and return model
 	def getGenerativeModel(self):
 		#TODO: try not using currentLayer variable to make it more clear where each layer is defined
-		#input shape: (batchSize, , numChannels, receptiveField)
+		#input shape: (batchSize, numChannels, receptiveField)
 		input = tf.placeholder(self.inputDType, shape=(-1, 1, self.receptiveField), name='Raw Input') 
+		#flip the order of input so that the most recent element is first (better for convolutions)
+		input = input[:, :, ::-1]
 
-		#preprocessing layer (one hot encoding)
-		oneHot = tf.one_hot(input, self.oneHotDepth, dtype=self.computationalDType, name='One Hot Encoding')
+		#preprocessing layer (one hot encoding) (may not need this)
+		#oneHot = tf.one_hot(input, self.oneHotDepth, dtype=self.computationalDType, name='One Hot Encoding')
 		#oneHot has the shape (batchSize, 1, receptiveField, oneHotDepth)
 
 		#causal layer (not sure if this is needed)
@@ -99,7 +102,7 @@ class WaveNet:
 		
 		#dilated convolutional stack 
 		outputs = []
-		currentLayer = oneHot
+		currentLayer = input #oneHot
 		with tf.variable_scope('Dilated Stack'):
 			for layerNumber, dilation in enumerate(self.layer_dialation_factors):
 				with tf.named_scope('Dilated Layer '+str(layerNumber)):
