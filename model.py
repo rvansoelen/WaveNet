@@ -60,7 +60,15 @@ class WaveNet:
 				currentLayer['Post-Process1'] = tf.Variable(self.conv_init(shape=[1, self.skip_filters, self.skip_filters]), name='Post-Process1')
 				currentLayer['Post-Process2'] = tf.Variable(self.conv_init(shape=[1, self.skip_filters, self.amplitude_vals]), name='Post-Process2')
 				layer_dictionary['Post-Processing'] = currentLayer
-
+				
+	def createOneByOneConv(self, input, name):
+		with tf.variable_scope(name):
+			numInChannels = tf.shape(input)[1]
+			w = tf.get_variable('weights', shape=(1, numInChannels, 1))
+			conv = tf.nn.conv1d(actv, w, 'VALID', stride='1', data_format='NCHW')
+			b = tf.get_variable('bias', shape=tf.shape(conv))
+			convWithBias = tf.add(conv, b)
+		return convWithBias
 
 	def createCausalConv(self, input, dilation, name, numFilters=1):
 		#the filter size is assumed to be 2
@@ -72,18 +80,18 @@ class WaveNet:
 			conv = tf.conv1d(downSample, w, 'VALID', stride=1, data_format='NCHW')
 			b = tf.get_variable('bias', shape=tf.shape(conv))
 			convWithBias = tf.add(conv, b)
-			return convWithBias
+		return convWithBias
 
-	def createDilatedLayer(self, input, name):
+	def createDilatedLayer(self, input, dilation, name):
 		with tf.variable_scope(name):
 			filterConv = self.createCausalConv(input, dilation, name='Filter Causal Convolution')
 			gateConv = self.createCausalConv(input, dilation, name='Gate Causal Convolution')
 			actv = tf.tanh(filterConv)*tf.sigmoid(gateConv)
-			#TODO: Apply 1x1 convolution
-			skip = actv
-			residual = tf.add(actv, input)
-			#TODO: Make sure actv is clipped to be the right size so it can be added with residual
-			return skip, residual
+			#Apply 1x1 convolution
+			oneByOneConv = self.createOneByOneConv(actv, name='1x1 Convolution')
+			skip = oneByOneConv[:, 0, :] #we only need the first element to go to the skip contribution
+			residual = tf.add(oneByOneConv, input[:, :, ::dilation]) #input is downsampled to match size of residual 
+		return skip, residual
 
 	#create and return model
 	def getGenerativeModel(self):
@@ -102,27 +110,20 @@ class WaveNet:
 		
 		#dilated convolutional stack 
 		outputs = []
-		currentLayer = input #oneHot
+		residual = input #oneHot (maybe)
 		with tf.variable_scope('Dilated Stack'):
 			for layerNumber, dilation in enumerate(self.layer_dialation_factors):
 				with tf.named_scope('Dilated Layer '+str(layerNumber)):
 					#represents skip(direct connection to last layer) and residual(normal) connections
-					skipOutput, currentLayer = self.createDilatedLayer(currentLayer, dilation, name='Dilated Layer '+str(layerNumber))
+					skipOutput, residual = self.createDilatedLayer(residual, dilation, name='Dilated Layer '+str(layerNumber))
 					outputs.append(skipOutput)
 
 		#post processing layer
 		with tf.variable_scope('Post-Processing'):
-			w1 = tf.get_variable('postWeights1', shapeW1)
-			b1 = tf.get_variable('postBias1', shapeB1)
-			w2 = tf.get_variable('postWeights1', shapeW2)
-			b2 = tf.get_variable('postBias1', shapeB2)
-
-			total = tf.nn.relu(sum(outputs))
-			conv1 = tf.nn.conv1d(transformed1, w1, stride=1, padding="SAME")
-			conv1 = tf.nn.relu(tf.add(conv1, b1))
-
-     		conv2 = tf.nn.conv1d(transformed2, w2, stride=1, padding="SAME")
-            conv2 = tf.add(conv2, b2)
+			skipSum = tf.nn.relu(sum(outputs))
+			conv1 = self.createOneByOneConv(skipSum, name='1x1 Convolution 1')
+			conv1 = tf.nn.relu(conv1)
+     		conv2 = self.createOneByOneConv(conv2, name='1x1 Convolution 1')
         return conv2
 
     def getTrainingModel(self, input):
